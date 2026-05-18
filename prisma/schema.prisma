@@ -1,0 +1,389 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================================
+// 用户与认证
+// ============================================================
+model User {
+  id        String   @id @default(cuid())
+  username  String   @unique
+  password  String
+  name      String
+  email     String?
+  phone     String?
+  role      String   @default("user") // admin, manager, user
+  avatar    String?
+  status    String   @default("active") // active, disabled
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("users")
+}
+
+// ============================================================
+// 附件（通用，使用多态关联）
+// ============================================================
+model Attachment {
+  id           String   @id @default(cuid())
+  filename     String
+  originalName String   @map("original_name")
+  mimeType     String   @map("mime_type")
+  size         Int
+  url          String
+  relatedType  String?  // 关联业务类型: contract, delivery, stock_in, invoice, repair, scrap
+  relatedId    String?  // 关联业务记录ID
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  @@map("attachments")
+}
+
+// ============================================================
+// 表1-1: 采购合同与供应商
+// ============================================================
+model Supplier {
+  id        String     @id @default(cuid())
+  code      String     @unique
+  name      String
+  category  String?
+  contact   String?
+  phone     String?
+  address   String?
+  remark    String?
+  status    String     @default("active")
+  createdAt DateTime   @default(now()) @map("created_at")
+  updatedAt DateTime   @updatedAt @map("updated_at")
+
+  contracts Contract[]
+
+  @@map("suppliers")
+}
+
+model Contract {
+  id            String        @id @default(cuid())
+  contractNo    String        @unique
+  name          String
+  supplierId    String        @map("supplier_id")
+  supplier      Supplier      @relation(fields: [supplierId], references: [id])
+  signingParty  String?
+  amount        Decimal?      @db.Decimal(12, 2)
+  status        String        @default("self_use") // self_use, for_sale
+  deliveryAddr  String?
+  shippingAddr  String?
+  remark        String?
+  createdAt     DateTime      @default(now()) @map("created_at")
+  updatedAt     DateTime      @updatedAt @map("updated_at")
+
+  purchaseLists PurchaseList[]
+  invoices      Invoice[]
+  deliveries    Delivery[]
+
+  @@map("contracts")
+}
+
+model PurchaseList {
+  id          String        @id @default(cuid())
+  contractId  String        @map("contract_id")
+  contract    Contract      @relation(fields: [contractId], references: [id], map: "purchase_list_contract_fk")
+  snCode      String        @unique
+  deviceName  String
+  deviceType  String?
+  model       String?
+  config      String?
+  quantity    Int           @default(1)
+  unitPrice   Decimal?      @db.Decimal(12, 2)
+  orderNo     String?
+  remark      String?
+  createdAt   DateTime      @default(now()) @map("created_at")
+  updatedAt   DateTime      @updatedAt @map("updated_at")
+
+  assetDetails AssetDetail[]
+
+  @@map("purchase_lists")
+}
+
+// ============================================================
+// 到货&入库
+// ============================================================
+model Delivery {
+  id          String   @id @default(cuid())
+  contractId  String   @map("contract_id")
+  contract    Contract @relation(fields: [contractId], references: [id], map: "delivery_contract_fk")
+  arrivalTime DateTime
+  location    String?
+  signee      String?
+  carrierInfo String?
+  remark      String?
+  status      String   @default("signed")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  @@map("deliveries")
+}
+
+model StockIn {
+  id          String          @id @default(cuid())
+  warehouse   String?
+  cluster     String?
+  remark      String?
+  status      String          @default("pending") // pending, approved, rejected
+  reviewedBy1 String?         @map("reviewed_by_1")
+  reviewedBy2 String?         @map("reviewed_by_2")
+  reviewedBy3 String?         @map("reviewed_by_3")
+  reviewedAt1 DateTime?       @map("reviewed_at_1")
+  reviewedAt2 DateTime?       @map("reviewed_at_2")
+  reviewedAt3 DateTime?       @map("reviewed_at_3")
+  createdAt   DateTime        @default(now()) @map("created_at")
+  updatedAt   DateTime        @updatedAt @map("updated_at")
+
+  details     StockInDetail[]
+
+  @@map("stock_ins")
+}
+
+model StockInDetail {
+  id         String        @id @default(cuid())
+  stockInId  String        @map("stock_in_id")
+  stockIn    StockIn       @relation(fields: [stockInId], references: [id], map: "stockin_detail_stockin_fk")
+  snCode     String
+  deviceName String
+  deviceType String?
+  model      String?
+  quantity   Int           @default(1)
+  config     String?
+  remark     String?
+
+  assetDetail AssetDetail?
+
+  @@map("stock_in_details")
+}
+
+// ============================================================
+// 发票
+// ============================================================
+model Invoice {
+  id          String   @id @default(cuid())
+  contractId  String   @map("contract_id")
+  contract    Contract @relation(fields: [contractId], references: [id], map: "invoice_contract_fk")
+  invoiceNo   String?
+  amount      Decimal? @db.Decimal(12, 2)
+  status      String   @default("uninvoiced") // uninvoiced, partial, invoiced, missing, archived
+  provisional Boolean  @default(false)
+  archivedAt  DateTime?
+  remark      String?
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  @@map("invoices")
+}
+
+// ============================================================
+// 编码与映射 - 资产核心表
+// ============================================================
+model AssetDetail {
+  id              String              @id @default(cuid())
+  purchaseListId  String?             @map("purchase_list_id")
+  purchaseList    PurchaseList?       @relation(fields: [purchaseListId], references: [id], map: "asset_purchaselist_fk")
+  stockInDetailId String?             @unique @map("stock_in_detail_id")
+  stockInDetail   StockInDetail?      @relation(fields: [stockInDetailId], references: [id], map: "asset_stockindetail_fk")
+  assetCode       String?             @unique
+  qrCode          String?             @unique
+  sn1Code         String?
+  sn2Code         String?
+  status          String              @default("pending") // pending, in_stock, in_use, operating, maintenance, scrapping, disposed
+  financialStatus String              @default("in_construction") // in_construction, transferred, disposed
+  assetType       String?
+  deviceName      String?
+  model           String?
+  config          String?
+  location        String?
+  warehouse       String?
+  cluster         String?
+  costPrice       Decimal?            @db.Decimal(12, 2)
+  remark          String?
+  createdAt       DateTime            @default(now()) @map("created_at")
+  updatedAt       DateTime            @updatedAt @map("updated_at")
+
+  components        ComponentSN[]
+  operations        AssetOperation[]
+  allocations       AssetAllocation[]
+  transfers         AssetTransfer[]
+  repairs           Repair[]
+  inventoryRecords  InventoryRecord[]
+  scraps            Scrap[]
+
+  @@map("asset_details")
+}
+
+model ComponentSN {
+  id            String      @id @default(cuid())
+  assetDetailId String      @map("asset_detail_id")
+  assetDetail   AssetDetail @relation(fields: [assetDetailId], references: [id], map: "component_asset_fk")
+  snCode        String      @unique
+  componentType String      // CPU, GPU, 硬盘, 网卡, 光模块, 其他
+  brand         String?
+  model         String?
+  config        String?
+  costPrice     Decimal?    @db.Decimal(12, 2)
+  remark        String?
+  createdAt     DateTime    @default(now()) @map("created_at")
+  updatedAt     DateTime    @updatedAt @map("updated_at")
+
+  @@map("component_sns")
+}
+
+// ============================================================
+// 虚拟库
+// ============================================================
+model Warehouse {
+  id        String   @id @default(cuid())
+  name      String   @unique
+  cluster   String?
+  location  String?
+  manager   String?
+  remark    String?
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("warehouses")
+}
+
+// ============================================================
+// 资产运营
+// ============================================================
+model AssetAllocation {
+  id            String      @id @default(cuid())
+  assetDetailId String      @map("asset_detail_id")
+  assetDetail   AssetDetail @relation(fields: [assetDetailId], references: [id], map: "allocation_asset_fk")
+  cluster       String?
+  assignee      String?
+  assignedAt    DateTime?
+  purpose       String?
+  fromWarehouse String?
+  remark        String?
+  createdAt     DateTime    @default(now()) @map("created_at")
+  updatedAt     DateTime    @updatedAt @map("updated_at")
+
+  @@map("asset_allocations")
+}
+
+model AssetOperation {
+  id              String      @id @default(cuid())
+  assetDetailId   String      @map("asset_detail_id")
+  assetDetail     AssetDetail @relation(fields: [assetDetailId], references: [id], map: "operation_asset_fk")
+  customer        String?
+  contractNo      String?
+  contractAmount  Decimal?    @db.Decimal(12, 2)
+  period          String?
+  operator        String?
+  cluster         String?
+  startAt         DateTime?
+  endAt           DateTime?
+  status          String      @default("operating") // operating, expired, terminated
+  remark          String?
+  createdAt       DateTime    @default(now()) @map("created_at")
+  updatedAt       DateTime    @updatedAt @map("updated_at")
+
+  @@map("asset_operations")
+}
+
+model AssetTransfer {
+  id              String      @id @default(cuid())
+  assetDetailId   String      @map("asset_detail_id")
+  assetDetail     AssetDetail @relation(fields: [assetDetailId], references: [id], map: "transfer_asset_fk")
+  sourceWarehouse String?
+  targetWarehouse String?
+  sourceCluster   String?
+  targetCluster   String?
+  reason          String?
+  status          String      @default("pending") // pending, signed, rejected
+  signee          String?
+  signedAt        DateTime?
+  remark          String?
+  createdAt       DateTime    @default(now()) @map("created_at")
+  updatedAt       DateTime    @updatedAt @map("updated_at")
+
+  @@map("asset_transfers")
+}
+
+// ============================================================
+// 维修
+// ============================================================
+model Repair {
+  id            String      @id @default(cuid())
+  assetDetailId String      @map("asset_detail_id")
+  assetDetail   AssetDetail @relation(fields: [assetDetailId], references: [id], map: "repair_asset_fk")
+  faultDesc     String?
+  urgency       String?
+  status        String      @default("pending") // pending, quoted, approved, repairing, repaired, completed
+  quoteAmount   Decimal?    @db.Decimal(12, 2)
+  report        String?
+  result        String?
+  isAvailable   Boolean?
+  remark        String?
+  createdAt     DateTime    @default(now()) @map("created_at")
+  updatedAt     DateTime    @updatedAt @map("updated_at")
+
+  @@map("repairs")
+}
+
+// ============================================================
+// 盘点
+// ============================================================
+model Inventory {
+  id         String            @id @default(cuid())
+  name       String
+  scope      String?
+  status     String            @default("pending") // pending, in_progress, completed, reviewed
+  reviewer   String?
+  reviewedAt DateTime?
+  remark     String?
+  createdAt  DateTime          @default(now()) @map("created_at")
+  updatedAt  DateTime          @updatedAt @map("updated_at")
+
+  records    InventoryRecord[]
+
+  @@map("inventories")
+}
+
+model InventoryRecord {
+  id            String      @id @default(cuid())
+  inventoryId   String      @map("inventory_id")
+  inventory     Inventory   @relation(fields: [inventoryId], references: [id], map: "invrecord_inventory_fk")
+  assetDetailId String      @map("asset_detail_id")
+  assetDetail   AssetDetail @relation(fields: [assetDetailId], references: [id], map: "invrecord_asset_fk")
+  scannedSN     String?
+  location      String?
+  photo         String?
+  gps           String?
+  difference    String?
+  status        String      @default("normal") // normal, surplus, loss, damaged
+  remark        String?
+  createdAt     DateTime    @default(now()) @map("created_at")
+
+  @@map("inventory_records")
+}
+
+// ============================================================
+// 报废&处置
+// ============================================================
+model Scrap {
+  id            String      @id @default(cuid())
+  assetDetailId String      @map("asset_detail_id")
+  assetDetail   AssetDetail @relation(fields: [assetDetailId], references: [id], map: "scrap_asset_fk")
+  reason        String?
+  status        String      @default("pending") // pending, approved, disposed, rejected
+  disposalType  String?
+  disposalAmount Decimal?   @db.Decimal(12, 2)
+  disposedAt    DateTime?
+  remark        String?
+  createdAt     DateTime    @default(now()) @map("created_at")
+  updatedAt     DateTime    @updatedAt @map("updated_at")
+
+  @@map("scraps")
+}
